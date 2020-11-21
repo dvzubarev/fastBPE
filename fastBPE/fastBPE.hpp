@@ -1,5 +1,7 @@
 #pragma once
 
+#include "utils.hpp"
+
 #include <algorithm>
 #include <assert.h>
 #include <errno.h>
@@ -20,13 +22,18 @@
 #include <unordered_set>
 #include <vector>
 
+#include <boost/algorithm/string.hpp>
+#include <boost/container_hash/hash.hpp>
 
 namespace fastBPE {
 
 using namespace std;
 
 const size_t kMaxPairs = 1000 * 1000 * 1000;
-const size_t kThreads = max(1, min(10, int(thread::hardware_concurrency())));
+// const size_t kThreads = max(1, min(10, int(thread::hardware_concurrency())));
+const size_t kThreads = 1;
+const char *kBegWord = "<w>";
+const size_t kBegWordLength = 3;
 const char *kEndWord = "</w>";
 const size_t kEndWordLength = 4;
 const char *kTokenDelim = "@@";
@@ -154,16 +161,6 @@ void outputText(const char *fpo, const char *fp,
   close(fd);
 }
 
-struct pair_hash {
-  template <class T1, class T2> size_t operator()(const pair<T1, T2> &p) const {
-    auto h1 = hash<T1>{}(p.first);
-    auto h2 = hash<T2>{}(p.second);
-    size_t seed = h1;
-    // boost::hash_combine
-    return h2 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-  }
-};
-
 void tokenize(const unordered_map<string, uint32_t> &word_count,
               unordered_map<string, uint32_t> &token_to_int,
               vector<string> &int_to_token, vector<list<uint32_t>> &words,
@@ -184,6 +181,9 @@ void tokenize(const unordered_map<string, uint32_t> &word_count,
       // new token
       if (newChar && pos > 0) {
         auto new_token = word.substr(lastStart, pos - lastStart);
+        if (current_word.empty())
+          new_token = kBegWord + new_token;
+
         if (token_to_int.count(new_token) == 0) {
           int_to_token.push_back(new_token);
           token_to_int[new_token] = int_to_token.size() - 1;
@@ -194,6 +194,8 @@ void tokenize(const unordered_map<string, uint32_t> &word_count,
       pos++;
     }
     auto new_token = word.substr(lastStart, string::npos) + kEndWord;
+    if (current_word.empty())
+        new_token = kBegWord + new_token;
     if (token_to_int.count(new_token) == 0) {
       int_to_token.push_back(new_token);
       token_to_int[new_token] = int_to_token.size() - 1;
@@ -202,39 +204,47 @@ void tokenize(const unordered_map<string, uint32_t> &word_count,
   }
 }
 
+
+void split_word_to_chars(const string& word, vector<string>& chars){
+    int pos = 0, realLength = 0;
+    int lastStart = 0;
+    while (word[pos]) {
+        bool newChar = (word[pos] & 0xc0) != 0x80; // not a continuation byte
+        realLength += newChar;
+        // new token
+        if (newChar && pos > 0) {
+            auto new_token = word.substr(lastStart, pos - lastStart);
+            if(chars.empty())
+                new_token = kBegWord + new_token;
+            chars.push_back(new_token);
+            lastStart = pos;
+        }
+        pos++;
+    }
+    auto new_token = word.substr(lastStart, string::npos) + kEndWord;
+    if (chars.empty())
+        new_token = kBegWord + new_token;
+    chars.push_back(new_token);
+}
 void tokenize_str(const unordered_map<string, uint32_t> &word_count,
                   unordered_map<string, vector<string>> &words) {
 
   for (auto &x : word_count) {
     auto &word = x.first;
-    words[word] = vector<string>();
+    auto& current_word = words[word];
 
-    int pos = 0, realLength = 0;
-    int lastStart = 0;
-    while (word[pos]) {
-      bool newChar = (word[pos] & 0xc0) != 0x80; // not a continuation byte
-      realLength += newChar;
-      // new token
-      if (newChar && pos > 0) {
-        auto new_token = word.substr(lastStart, pos - lastStart);
-        words[word].push_back(new_token);
-        lastStart = pos;
-      }
-      pos++;
-    }
-    auto new_token = word.substr(lastStart, string::npos) + kEndWord;
-    words[word].push_back(new_token);
+    split_word_to_chars(word, current_word);
   }
 }
 
 using tp = pair<uint32_t, uint32_t>;
 using tps = pair<string, string>;
-using pc = unordered_map<tp, pair<int32_t, tp> *, pair_hash>;
+using pc = unordered_map<tp, pair<int32_t, tp> *, pair_hash_t>;
 
 void count_in_word(
     list<uint32_t> &word, uint32_t wi, uint32_t count, pc &pair_counts,
     vector<pair<int32_t, tp>> &contiguous_counts,
-    unordered_map<tp, unordered_set<uint32_t>, pair_hash> &where) {
+    unordered_map<tp, unordered_set<uint32_t>, pair_hash_t> &where) {
   bool second = false;
   tp cur_pair;
   for (uint32_t token : word) {
@@ -314,23 +324,41 @@ void learnbpe(const uint32_t kNPairs, const char *inputFile1,
   vector<list<uint32_t>> words;
   vector<int32_t> counts;
 
+  //split words into chars (tokens);
+  // represent words as list of token ids; store counts from word_count into array alongside with words
   tokenize(word_count, token_to_int, int_to_token, words, counts);
 
+  //tp is pair of tokens
+  //int32_t is total count of tp among all words
   vector<pair<int32_t, tp>> contiguous_counts;
   contiguous_counts.reserve(kMaxPairs);
 
+  //pc maps tp to the "tuple" from contiguous_count (it stores pointer to a vector element)
   pc pair_counts;
-  unordered_map<tp, unordered_set<uint32_t>, pair_hash> where_to_update;
+  //uint32_t is index of a word in words/counts
+  unordered_map<tp, unordered_set<uint32_t>, pair_hash_t> where_to_update;
 
   tp cur_pair;
+  // max count and corresponding pair
   int32_t max_c = 0;
   tp max_p;
+  // init pairs of chars
   for (uint32_t wi = 0; wi < words.size(); wi++) {
     count_in_word(words[wi], wi, counts[wi], pair_counts, contiguous_counts,
                   where_to_update);
   }
   find_maxp(contiguous_counts, max_p, max_c);
   for (size_t i = 0; i < kNPairs; i++) {
+    if (boost::starts_with(int_to_token[max_p.first], kBegWord) and
+        boost::ends_with(int_to_token[max_p.second], kEndWord)) {
+      // this is the whole word. Do nothing
+      if (pair_counts.find(max_p) != pair_counts.end()) {
+        pair_counts[max_p]->first = 0;
+      }
+      find_maxp(contiguous_counts, max_p, max_c);
+      continue;
+    }
+
     // create new token for pair. replace
     auto new_token = int_to_token[max_p.first] + int_to_token[max_p.second];
     cout << int_to_token[max_p.first] << " " << int_to_token[max_p.second]
@@ -440,7 +468,7 @@ void readVocab(const char *fp, unordered_map<string, uint32_t> &vocab) {
           vocab.size());
 }
 
-void readCodes(const char *fp, unordered_map<tps, uint32_t, pair_hash> &codes,
+void readCodes(const char *fp, unordered_map<tps, double, pair_hash_t> &codes,
                unordered_map<string, tps> &reversed_codes) {
   ifstream file(fp);
   if (!file) {
@@ -457,7 +485,7 @@ void readCodes(const char *fp, unordered_map<tps, uint32_t, pair_hash> &codes,
     string concat = splits[0] + splits[1];
     assert(codes.find(pair) == codes.end());
     assert(reversed_codes.find(concat) == reversed_codes.end());
-    codes[pair] = codes.size();
+    codes[pair] =std::log2(std::stod(splits[2]));
     reversed_codes[concat] = pair;
   }
   fprintf(stderr, "Read %lu codes from the codes file.\n", codes.size());
@@ -521,7 +549,7 @@ void limitVocab(const vector<string> &subwords, vector<string> &newSubwords,
 }
 
 string process_bpe(vector<string> &subwords,
-                   unordered_map<tps, uint32_t, pair_hash> &codes,
+                   unordered_map<tps, double, pair_hash_t> &codes,
                    unordered_map<string, tps> &reversed_codes,
                    unordered_map<string, uint32_t> &vocab) {
   // merge subWords as much as possible
@@ -533,8 +561,9 @@ string process_bpe(vector<string> &subwords,
     for (size_t i = 0; i < subwords.size() - 1; i++) {
       auto pair = make_pair(subwords[i], subwords[i + 1]);
       auto it = codes.find(pair);
-      int pairRank = it == codes.end() ? -1 : it->second;
-      if (pairRank >= 0 && (bestPairId == -1 || int(bestPair->second) > pairRank)) {
+      double pairRank = it == codes.end() ? -1 : it->second;
+      //rank is greater for pairs with smaller frequency
+      if (pairRank >= 0 && (bestPairId == -1 || bestPair->second < pairRank)) {
         bestPair = it;
         bestPairId = i;
       }
@@ -559,7 +588,7 @@ string process_bpe(vector<string> &subwords,
         justMerged = false;
       }
     }
-    subwords = newSubwords;
+    subwords = std::move(newSubwords);
   }
   // check that we are only using words in the dictionary
   if (vocab.size() > 0) {
@@ -567,6 +596,7 @@ string process_bpe(vector<string> &subwords,
     limitVocab(subwords, newSubwords, reversed_codes, vocab);
     subwords = newSubwords;
   }
+  //TODO return vector
   // concat subWords
   string result;
   for (auto x : subwords) {
@@ -587,7 +617,9 @@ void applybpe(const char *outputFile, const char *inputFile,
   }
 
   // read codes
-  unordered_map<tps, uint32_t, pair_hash> codes;
+  // old: uint32_t is num of pair; it is used as pairRank in process_bpe
+  //new: double is log2 of frequency
+  unordered_map<tps, double, pair_hash_t> codes;
   unordered_map<string, tps> reversed_codes;
   readCodes(codesPath, codes, reversed_codes);
 
@@ -597,6 +629,7 @@ void applybpe(const char *outputFile, const char *inputFile,
 
   // tokenize
   unordered_map<string, vector<string>> bpeTok;
+  //split words into chars tokens
   tokenize_str(word_count, bpeTok);
 
   vector<pair<string, vector<string>>> bpeTokVec;
@@ -634,7 +667,7 @@ void applybpe(const char *outputFile, const char *inputFile,
 class BPEApplyer {
 private:
   unordered_map<string, uint32_t> vocab;
-  unordered_map<tps, uint32_t, pair_hash> codes;
+  unordered_map<tps, double, pair_hash_t> codes;
   unordered_map<string, tps> reversed_codes;
 
 public:
