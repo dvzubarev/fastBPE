@@ -10,12 +10,15 @@
 namespace fastBPE {
 
 
-
 class Encoder{
 public:
+    struct variant_t{
+        double score;
+        std::vector<std::string> subwords;
+    };
     Encoder(const std::string& codesPath, bool strip_aux_tags = false);
 
-    std::vector<std::string> apply(const std::string& word)const;
+    std::vector<variant_t> apply(const std::string& word, int k)const;
 
 private:
     using pair_t = std::pair<std::string, std::string>;
@@ -24,6 +27,9 @@ private:
     bool strip_aux_tags_;
 
 };
+
+std::vector<std::string> uniq_subwords(const std::vector<Encoder::variant_t>& variants,
+                                       size_t min_subword_len);
 
 
 }

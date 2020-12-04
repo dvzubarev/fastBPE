@@ -99,9 +99,11 @@ vector<string> select_subwords(vector<process_bpe_state_t>&& states){
 
 constexpr size_t MAX_STATES_COUNT = 50;
 
-vector<string>
+
+vector<process_bpe_state_t>
 process_bpe_full(vector<string> &subwords,
-                 const unordered_map<tps, double, pair_hash_t> &codes) {
+                 const unordered_map<tps, double, pair_hash_t> &codes,
+                 int k) {
 
     auto heap_pred = [](const process_bpe_state_t& l, const process_bpe_state_t& r){
         return l.score > r.score;
@@ -109,8 +111,7 @@ process_bpe_full(vector<string> &subwords,
 
   vector<process_bpe_state_t> states;
 
-  process_bpe_state_t best_state((vector<string>()));
-  best_state.score = 0;
+  vector<process_bpe_state_t> best_states;
   unordered_set<uint64_t> seen;
 
   states.emplace_back(std::move(subwords));
@@ -145,16 +146,21 @@ process_bpe_full(vector<string> &subwords,
           }
           std::push_heap(states.begin(), states.end(), heap_pred);
       }
-      if(final_state)
-          if (cur_state.score > best_state.score)
-              best_state = std::move(cur_state);
+
+      if(final_state){
+          if(best_states.size() < k)
+              best_states.push_back(std::move(cur_state));
+          else if(cur_state.score > best_states.front().score){
+              std::pop_heap(best_states.begin(), best_states.end(), heap_pred);
+              best_states.back() = std::move(cur_state);
+          }
+          std::push_heap(best_states.begin(), best_states.end(), heap_pred);
+      }
 
   }
 
-  vector<string> strs(best_state.subwords.size());
-  std::transform(std::begin(best_state.subwords), std::end(best_state.subwords),
-                 std::begin(strs), [](const auto& sub) {return sub.token;});
-  return strs;
+  std::sort_heap(best_states.begin(), best_states.end(), heap_pred);
+  return best_states;
 }
 
 
@@ -202,12 +208,7 @@ Encoder::Encoder(const std::string& codes_path, bool strip_aux_tags):strip_aux_t
     readCodes(codes_path.c_str(), codes_, strip_aux_tags_);
 }
 
-std::vector<std::string>
-Encoder::apply(const std::string& word)const{
-    vector<string> word_bpes;
-    split_word_to_chars(word, word_bpes, !strip_aux_tags_);
-    auto subwords = process_bpe_full(word_bpes, codes_);
-
+void strip_aux_tags(vector<string>& subwords){
     auto ret = std::strncmp(subwords[0].data(), kBegWord, kBegWordLength);
     if (ret == 0)
         subwords[0] = subwords[0].substr(kBegWordLength);
@@ -219,7 +220,38 @@ Encoder::apply(const std::string& word)const{
         if (ret == 0)
             subwords[last] = subwords[last].substr(0, subwords[last].size() - kEndWordLength);
     }
-    return subwords;
 }
 
+std::vector<Encoder::variant_t>
+Encoder::apply(const std::string& word, int k)const{
+    vector<string> word_bpes;
+    split_word_to_chars(word, word_bpes, !strip_aux_tags_);
+    auto best_states = process_bpe_full(word_bpes, codes_, k);
+
+    std::vector<Encoder::variant_t> results(best_states.size());
+    auto rit = results.begin();
+    for(auto& state : best_states){
+        rit->subwords.resize(state.subwords.size());
+
+        std::transform(std::begin(state.subwords), std::end(state.subwords),
+                       std::begin(rit->subwords), [](const auto& sub) {return sub.token;});
+        strip_aux_tags(rit->subwords);
+        rit++->score = state.score;
+    }
+
+
+    return results;
+}
+
+
+std::vector<std::string> uniq_subwords(const std::vector<Encoder::variant_t>& variants,
+                                       size_t min_subword_len){
+    std::unordered_set<std::string> seen_subwords;
+    for(const auto& var : variants)
+        for(const auto& subword : var.subwords){
+            if(token_len(subword) >= min_subword_len)
+                seen_subwords.insert(subword);
+        }
+    return std::vector(seen_subwords.begin(), seen_subwords.end());
+}
 }
