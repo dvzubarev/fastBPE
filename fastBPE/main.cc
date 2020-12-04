@@ -1,4 +1,5 @@
 #include "fastBPE.hpp"
+#include "API.hpp"
 
 using namespace std;
 using namespace fastBPE;

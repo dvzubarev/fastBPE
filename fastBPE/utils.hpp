@@ -19,6 +19,15 @@ struct pair_hash_t{
 
 };
 
+const static char *kBegWord = "<w>";
+const static size_t kBegWordLength = 3;
+const static char *kEndWord = "</w>";
+const static size_t kEndWordLength = 4;
+const static char *kTokenDelim = "@@";
+const static size_t kTokenDelimLength = 2;
+
+std::size_t token_len(std::string s);
+
 }
 
 #endif // FASTBPE_UTILS_HPP

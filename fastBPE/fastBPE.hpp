@@ -32,14 +32,8 @@ using namespace std;
 const size_t kMaxPairs = 1000 * 1000 * 1000;
 // const size_t kThreads = max(1, min(10, int(thread::hardware_concurrency())));
 const size_t kThreads = 1;
-const char *kBegWord = "<w>";
-const size_t kBegWordLength = 3;
-const char *kEndWord = "</w>";
-const size_t kEndWordLength = 4;
-const char *kTokenDelim = "@@";
-const size_t kTokenDelimLength = 2;
 
-int safeOpen(const char *file_path, int flags, mode_t mode = 0) {
+inline int safeOpen(const char *file_path, int flags, mode_t mode = 0) {
   int fd = open(file_path, flags, mode);
   if (fd < 0) {
     fprintf(stderr, "Cannot open text file %s\n", file_path);
@@ -205,7 +199,8 @@ void tokenize(const unordered_map<string, uint32_t> &word_count,
 }
 
 
-void split_word_to_chars(const string& word, vector<string>& chars){
+void split_word_to_chars(const string& word, vector<string>& chars,
+                         bool add_aux_tags = true){
     int pos = 0, realLength = 0;
     int lastStart = 0;
     while (word[pos]) {
@@ -214,15 +209,17 @@ void split_word_to_chars(const string& word, vector<string>& chars){
         // new token
         if (newChar && pos > 0) {
             auto new_token = word.substr(lastStart, pos - lastStart);
-            if(chars.empty())
+            if(add_aux_tags and chars.empty())
                 new_token = kBegWord + new_token;
             chars.push_back(new_token);
             lastStart = pos;
         }
         pos++;
     }
-    auto new_token = word.substr(lastStart, string::npos) + kEndWord;
-    if (chars.empty())
+    auto new_token = word.substr(lastStart, string::npos);
+    if(add_aux_tags)
+        new_token += kEndWord;
+    if (add_aux_tags and chars.empty())
         new_token = kBegWord + new_token;
     chars.push_back(new_token);
 }
@@ -273,7 +270,7 @@ void count_in_word(
   }
 }
 
-void find_maxp(vector<pair<int32_t, tp>> &contiguous_counts, tp &maxp,
+inline void find_maxp(vector<pair<int32_t, tp>> &contiguous_counts, tp &maxp,
                int32_t &max_c) {
   max_c = 0;
   for (auto &x : contiguous_counts) {
@@ -308,8 +305,39 @@ void getvocab(const char *inputFile1, const char *inputFile2) {
     cout << element.first << " " << element.second << endl;
 }
 
+
+
+struct learnbpe_opts_t{
+    size_t min_count = 200;
+    size_t max_subword_len = 8;
+};
+
+
+bool is_good_pair(const tp& pair,
+               const vector<string>& int_to_token,
+               const learnbpe_opts_t& opts){
+
+    const auto& first = int_to_token[pair.first];
+    const auto& second = int_to_token[pair.second];
+    bool whole_word = boost::starts_with(first, kBegWord) and
+        boost::ends_with(second, kEndWord);
+    if (whole_word)
+        // this is the whole word. Do nothing
+        return false;
+
+    if (token_len(first) + token_len(second) > opts.max_subword_len)
+        return false;
+
+
+    return true;
+
+}
+
+
+
 void learnbpe(const uint32_t kNPairs, const char *inputFile1,
-              const char *inputFile2) {
+              const char *inputFile2,
+              const learnbpe_opts_t& opts = learnbpe_opts_t()) {
   // get vocab
   unordered_map<string, uint32_t> word_count;
   readText(inputFile1, word_count);
@@ -349,9 +377,10 @@ void learnbpe(const uint32_t kNPairs, const char *inputFile1,
   }
   find_maxp(contiguous_counts, max_p, max_c);
   for (size_t i = 0; i < kNPairs; i++) {
-    if (boost::starts_with(int_to_token[max_p.first], kBegWord) and
-        boost::ends_with(int_to_token[max_p.second], kEndWord)) {
-      // this is the whole word. Do nothing
+    if(max_c < opts.min_count)
+       break;
+
+    if (not is_good_pair(max_p, int_to_token, opts)) {
       if (pair_counts.find(max_p) != pair_counts.end()) {
         pair_counts[max_p]->first = 0;
       }
@@ -361,6 +390,7 @@ void learnbpe(const uint32_t kNPairs, const char *inputFile1,
 
     // create new token for pair. replace
     auto new_token = int_to_token[max_p.first] + int_to_token[max_p.second];
+
     cout << int_to_token[max_p.first] << " " << int_to_token[max_p.second]
          << " " << max_c << endl;
 

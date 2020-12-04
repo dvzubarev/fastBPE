@@ -8,6 +8,14 @@ import numpy as np
 def sigmoid(x, x0, k):
     return 1 / (1+ np.exp(-k*(x-x0)))
 
+    # xbegin = 200
+    # xend = 84_000
+    # step = (xend - xbegin) // len(ydata)
+    # print("step", step)
+
+    # # step = 64_500
+    # l = list(range(xbegin, xend, step))
+
 def fit_freqs():
     print("Fit freqs")
     ydata = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95])

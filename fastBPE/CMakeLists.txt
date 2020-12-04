@@ -1,6 +1,6 @@
 set(PUBLIC_HEADERS API.hpp utils.hpp)
 
-add_executable(fastbpe-bin main.cc)
+add_executable(fastbpe-bin main.cc utils.cpp)
 target_link_libraries(fastbpe-bin
   PRIVATE
   pthread
@@ -8,11 +8,17 @@ target_link_libraries(fastbpe-bin
 install (TARGETS fastbpe-bin
   RUNTIME DESTINATION bin)
 
-add_library(fastbpe SHARED API.cpp)
+add_library(fastbpe SHARED API.cpp utils.cpp)
 target_link_libraries(fastbpe
   PRIVATE pthread
   PUBLIC Boost::boost
   )
+
+add_executable(fastbpecli API_cli.cc API.cpp utils.cpp)
+target_link_libraries(fastbpecli
+  PRIVATE
+  pthread
+  Boost::boost)
 
 
 install (FILES ${PUBLIC_HEADERS} DESTINATION include/fastbpe)
