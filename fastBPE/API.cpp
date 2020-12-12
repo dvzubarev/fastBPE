@@ -243,6 +243,37 @@ Encoder::apply(const std::string& word, int k)const{
     return results;
 }
 
+void Encoder::save(std::ostream &out)const{
+
+    size_t sz = codes_.size();
+    out.write((char*)&sz, sizeof(size_t));
+    out.write((char*)&strip_aux_tags_, sizeof(bool));
+    for (const auto& [p, count] : codes_) {
+        out.write(p.first.data(), p.first.size() * sizeof(char));
+        out.put(0);
+        out.write(p.second.data(), p.second.size() * sizeof(char));
+        out.put(0);
+        out.write((char*)&count, sizeof(double));
+    }
+}
+
+void Encoder::load(std::istream &in){
+    codes_.clear();
+    size_t sz;
+    in.read((char*)&sz, sizeof(size_t));
+    in.read((char*)&strip_aux_tags_, sizeof(bool));
+    for (int32_t i = 0; i < sz; i++) {
+        char c;
+        pair_t p;
+        double count;
+        while ((c = in.get()) != 0)
+            p.first.push_back(c);
+        while ((c = in.get()) != 0)
+            p.second.push_back(c);
+        in.read((char*)&count, sizeof(double));
+        codes_[p] = count;
+    }
+}
 
 std::vector<std::string> uniq_subwords(const std::vector<Encoder::variant_t>& variants,
                                        size_t min_subword_len){

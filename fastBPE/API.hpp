@@ -16,9 +16,13 @@ public:
         double score;
         std::vector<std::string> subwords;
     };
+    Encoder()=default;
     Encoder(const std::string& codesPath, bool strip_aux_tags = false);
 
     std::vector<variant_t> apply(const std::string& word, int k)const;
+    void save(std::ostream& out)const;
+    void load(std::istream& in);
+
 
 private:
     using pair_t = std::pair<std::string, std::string>;
