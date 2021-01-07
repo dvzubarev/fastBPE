@@ -376,7 +376,12 @@ void learnbpe(const uint32_t kNPairs, const char *inputFile1,
                   where_to_update);
   }
   find_maxp(contiguous_counts, max_p, max_c);
-  for (size_t i = 0; i < kNPairs; i++) {
+
+  auto pairs_cnt = 0;
+  for (size_t i = 0; true; i++) {
+    if (pairs_cnt >= kNPairs)
+      break;
+
     if(max_c < opts.min_count)
        break;
 
@@ -386,7 +391,8 @@ void learnbpe(const uint32_t kNPairs, const char *inputFile1,
       }
       find_maxp(contiguous_counts, max_p, max_c);
       continue;
-    }
+    }else
+        ++pairs_cnt;
 
     // create new token for pair. replace
     auto new_token = int_to_token[max_p.first] + int_to_token[max_p.second];
