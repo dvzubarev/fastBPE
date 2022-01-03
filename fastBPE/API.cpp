@@ -47,20 +47,14 @@ inline double sigmoid(double x, double x0, double k){
     return 1. / (1. + std::exp(-k * (x - x0)));
 }
 inline double freq_score(double x){
-    //see params.py
-    //log2 params
-    return sigmoid(x, 17.789, 1.277);
-    // return sigmoid(x, 14.842, 1.274);
-    //log10 params
-    // return sigmoid(x, 5.355, 4.241);
+    return std::log(x) / std::log(34478712);
 }
 inline double len_score(double x){
-    //see params.py
-    return sigmoid(x, 4.179, 0.921);
+    return std::log(x+1)/std::log(9);
 }
 
-const double FREQ_WEIGHT = 0.2;
-const double LEN_WEIGHT = 0.8;
+const double FREQ_WEIGHT = 0.0;
+const double LEN_WEIGHT = 1.0;
 
 void score_state(process_bpe_state_t& state){
     int n = 0;
@@ -109,58 +103,65 @@ process_bpe_full(vector<string> &subwords,
         return l.score > r.score;
     };
 
-  vector<process_bpe_state_t> states;
+    vector<process_bpe_state_t> states;
 
-  vector<process_bpe_state_t> best_states;
-  unordered_set<uint64_t> seen;
+    vector<process_bpe_state_t> new_states;
+    vector<process_bpe_state_t> best_states;
+    unordered_set<uint64_t> seen;
 
-  states.emplace_back(std::move(subwords));
-  while(not states.empty()){
-      std::pop_heap(states.begin(), states.end(), heap_pred);
-      auto cur_state = states.back();
-      states.pop_back();
-      bool final_state = true;
-      for (size_t i = 0; i < cur_state.subwords.size() - 1; i++) {
-          auto pair = make_pair(cur_state.subwords[i].token,
-                                cur_state.subwords[i + 1].token);
-          auto it = codes.find(pair);
-          if (it == codes.end())
-              continue;
+    states.emplace_back(std::move(subwords));
+    while (true){
+        if (states.empty() and new_states.empty())
+            break;
+        while(not states.empty()){
+            std::pop_heap(states.begin(), states.end(), heap_pred);
+            auto cur_state = states.back();
+            states.pop_back();
+            bool final_state = true;
+            for (size_t i = 0; i < cur_state.subwords.size() - 1; i++) {
+                auto pair = make_pair(cur_state.subwords[i].token,
+                                    cur_state.subwords[i + 1].token);
+                auto it = codes.find(pair);
+                if (it == codes.end())
+                    continue;
 
-          final_state = false;
+                final_state = false;
 
-          auto new_state = cur_state.create_new_state(pair, i, it->second);
-          const auto [t, inserted] = seen.insert(new_state.hash);
+                auto new_state = cur_state.create_new_state(pair, i, it->second);
+                const auto [t, inserted] = seen.insert(new_state.hash);
 
-          if(not inserted)
-              //already seen state
-              continue;
+                if(not inserted)
+                    //already seen state
+                    continue;
 
-          score_state(new_state);
+                score_state(new_state);
 
-          if(states.size() < MAX_STATES_COUNT)
-              states.push_back(std::move(new_state));
-          else if (new_state.score > states.front().score){
-              std::pop_heap(states.begin(), states.end(), heap_pred);
-              states.back() = std::move(new_state);
-          }
-          std::push_heap(states.begin(), states.end(), heap_pred);
-      }
+                if(new_states.size() < MAX_STATES_COUNT)
+                    new_states.push_back(std::move(new_state));
+                else if (new_state.score > new_states.front().score){
+                    std::pop_heap(new_states.begin(), new_states.end(), heap_pred);
+                    new_states.back() = std::move(new_state);
+                }
+                std::push_heap(new_states.begin(), new_states.end(), heap_pred);
+            }
 
-      if(final_state){
-          if(best_states.size() < k)
-              best_states.push_back(std::move(cur_state));
-          else if(cur_state.score > best_states.front().score){
-              std::pop_heap(best_states.begin(), best_states.end(), heap_pred);
-              best_states.back() = std::move(cur_state);
-          }
-          std::push_heap(best_states.begin(), best_states.end(), heap_pred);
-      }
+            if(final_state){
+                if(best_states.size() < k)
+                    best_states.push_back(std::move(cur_state));
+                else if(cur_state.score > best_states.front().score){
+                    std::pop_heap(best_states.begin(), best_states.end(), heap_pred);
+                    best_states.back() = std::move(cur_state);
+                }
+                std::push_heap(best_states.begin(), best_states.end(), heap_pred);
+            }
 
-  }
+        }
+        states = std::move(new_states);
+        new_states.clear();
+    }
 
-  std::sort_heap(best_states.begin(), best_states.end(), heap_pred);
-  return best_states;
+    std::sort_heap(best_states.begin(), best_states.end(), heap_pred);
+    return best_states;
 }
 
 

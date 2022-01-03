@@ -1,6 +1,0 @@
-%compile_commands.json
-
--isystem
-/nix/store/s3w40x3z6zmjylrpbcxm9m3mhq3v1amf-boost-1.69.0-dev/include
--isystem
-/nix/store/s3w40x3z6zmjylrpbcxm9m3mhq3v1amf-boost-1.69.0-dev/include

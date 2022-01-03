@@ -7,10 +7,10 @@ set (fasttext_VERSION_MAJOR 0)
 set (fasttext_VERSION_MINOR 1)
 
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Boost 1.68 REQUIRED)
+find_package(Boost 1.69 REQUIRED)
 
 add_subdirectory(fastBPE)
 

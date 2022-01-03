@@ -314,8 +314,8 @@ struct learnbpe_opts_t{
 
 
 bool is_good_pair(const tp& pair,
-               const vector<string>& int_to_token,
-               const learnbpe_opts_t& opts){
+                  const vector<string>& int_to_token,
+                  const learnbpe_opts_t& opts){
 
     const auto& first = int_to_token[pair.first];
     const auto& second = int_to_token[pair.second];
@@ -387,6 +387,7 @@ void learnbpe(const uint32_t kNPairs, const char *inputFile1,
 
     if (not is_good_pair(max_p, int_to_token, opts)) {
       if (pair_counts.find(max_p) != pair_counts.end()) {
+        //zero out this pair, so it won't be found in find_maxp
         pair_counts[max_p]->first = 0;
       }
       find_maxp(contiguous_counts, max_p, max_c);
