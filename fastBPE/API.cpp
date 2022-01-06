@@ -53,8 +53,8 @@ inline double len_score(double x){
     return std::log(x+1)/std::log(9);
 }
 
-const double FREQ_WEIGHT = 0.0;
-const double LEN_WEIGHT = 1.0;
+const double FREQ_WEIGHT = 0.1;
+const double LEN_WEIGHT = 0.9;
 
 void score_state(process_bpe_state_t& state){
     int n = 0;
@@ -91,7 +91,7 @@ vector<string> select_subwords(vector<process_bpe_state_t>&& states){
 }
 
 
-constexpr size_t MAX_STATES_COUNT = 50;
+constexpr size_t MAX_STATES_COUNT = 10;
 
 
 vector<process_bpe_state_t>
@@ -114,13 +114,13 @@ process_bpe_full(vector<string> &subwords,
         if (states.empty() and new_states.empty())
             break;
         while(not states.empty()){
-            std::pop_heap(states.begin(), states.end(), heap_pred);
             auto cur_state = states.back();
             states.pop_back();
+
             bool final_state = true;
             for (size_t i = 0; i < cur_state.subwords.size() - 1; i++) {
                 auto pair = make_pair(cur_state.subwords[i].token,
-                                    cur_state.subwords[i + 1].token);
+                                      cur_state.subwords[i + 1].token);
                 auto it = codes.find(pair);
                 if (it == codes.end())
                     continue;
@@ -135,14 +135,19 @@ process_bpe_full(vector<string> &subwords,
                     continue;
 
                 score_state(new_state);
+                bool added = false;
 
-                if(new_states.size() < MAX_STATES_COUNT)
+                if(new_states.size() < MAX_STATES_COUNT){
                     new_states.push_back(std::move(new_state));
+                    added = true;
+                }
                 else if (new_state.score > new_states.front().score){
                     std::pop_heap(new_states.begin(), new_states.end(), heap_pred);
                     new_states.back() = std::move(new_state);
+                    added = true;
                 }
-                std::push_heap(new_states.begin(), new_states.end(), heap_pred);
+                if (added)
+                    std::push_heap(new_states.begin(), new_states.end(), heap_pred);
             }
 
             if(final_state){
@@ -236,6 +241,7 @@ Encoder::apply(const std::string& word, int k)const{
 
         std::transform(std::begin(state.subwords), std::end(state.subwords),
                        std::begin(rit->subwords), [](const auto& sub) {return sub.token;});
+        //TODO should it be conditional based on strip_aux_tags_?
         strip_aux_tags(rit->subwords);
         rit++->score = state.score;
     }
