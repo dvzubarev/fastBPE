@@ -4,11 +4,6 @@
 namespace fastBPE {
 
 
-struct subword_t{
-    subword_t(std::string&& s, double f = 0.):token(std::move(s)),freq(f){}
-    string token;
-    double freq;
-};
 
 struct process_bpe_state_t{
     process_bpe_state_t(vector<string>&& s): hash(0) {
@@ -46,37 +41,33 @@ struct process_bpe_state_t{
 inline double sigmoid(double x, double x0, double k){
     return 1. / (1. + std::exp(-k * (x - x0)));
 }
-inline double freq_score(double x){
-    return std::log(x) / std::log(34478712);
-}
-inline double len_score(double x){
-    return std::log(x+1)/std::log(9);
-}
 
-const double FREQ_WEIGHT = 0.1;
-const double LEN_WEIGHT = 0.9;
 
-void score_state(process_bpe_state_t& state){
+
+double Scorer::score_subwords(const std::vector<subword_t>& subwords)const{
     int n = 0;
-    state.score = 0.;
-    for (const auto& sub : state.subwords){
+    double score = 0.;
+    for (const auto& sub : subwords){
         ++n;
         auto sz = token_len(sub.token);
         if(sz < 2 ){
-            state.score += len_score(sz) * LEN_WEIGHT + 0.5 * FREQ_WEIGHT;
+            score += len_score(sz) * LEN_WEIGHT + 0.5 * FREQ_WEIGHT;
             continue;
         }
 
         auto fscore = freq_score(sub.freq);
         auto lscore = len_score(sz);
-        state.score += FREQ_WEIGHT * fscore + LEN_WEIGHT * lscore;
+        score += FREQ_WEIGHT * fscore + LEN_WEIGHT * lscore;
     }
-    state.score /= n;
+    score /= n;
+    return score;
+
 }
 
-vector<string> select_subwords(vector<process_bpe_state_t>&& states){
+
+vector<string> select_subwords(vector<process_bpe_state_t>&& states, const Scorer& scorer){
     for(auto& state: states)
-        score_state(state);
+        state.score = scorer.score_subwords(state.subwords);
 
     auto it = std::max_element(std::begin(states), std::end(states),
                                [](const auto& l, const auto& r){return l.score < r.score;});
@@ -91,12 +82,13 @@ vector<string> select_subwords(vector<process_bpe_state_t>&& states){
 }
 
 
-constexpr size_t MAX_STATES_COUNT = 10;
+constexpr size_t MAX_STATES_COUNT = 15;
 
 
 vector<process_bpe_state_t>
 process_bpe_full(vector<string> &subwords,
                  const unordered_map<tps, double, pair_hash_t> &codes,
+                 const Scorer& scorer,
                  int k) {
 
     auto heap_pred = [](const process_bpe_state_t& l, const process_bpe_state_t& r){
@@ -134,7 +126,7 @@ process_bpe_full(vector<string> &subwords,
                     //already seen state
                     continue;
 
-                score_state(new_state);
+                new_state.score = scorer.score_subwords(new_state.subwords);
                 bool added = false;
 
                 if(new_states.size() < MAX_STATES_COUNT){
@@ -170,9 +162,9 @@ process_bpe_full(vector<string> &subwords,
 }
 
 
-void readCodes(const char *fp,
-               unordered_map<tps, double, pair_hash_t> &codes,
-               bool strip_aux_tags = false) {
+double readCodes(const char *fp,
+                 unordered_map<tps, double, pair_hash_t> &codes,
+                 bool strip_aux_tags = false) {
     ifstream file(fp);
     if (!file) {
         fprintf(stderr, "Cannot open codes file %s\n", fp);
@@ -204,14 +196,19 @@ void readCodes(const char *fp,
         else
             fit->second += val;
     }
-    for (auto& p : codes)
-        p.second = std::log2(p.second);
+    double max_freq = 0.;
+    for (auto& p : codes){
+        p.second = std::log(p.second);
+        max_freq = std::max(max_freq, p.second);
+    }
 
-    fprintf(stderr, "Read %lu codes from the codes file.\n", codes.size());
+    fprintf(stderr, "Read %lu codes from the codes file, max val %f.\n", codes.size(), max_freq);
+    return max_freq;
 }
 
 Encoder::Encoder(const std::string& codes_path, bool strip_aux_tags):strip_aux_tags_(strip_aux_tags){
-    readCodes(codes_path.c_str(), codes_, strip_aux_tags_);
+    double max_freq = readCodes(codes_path.c_str(), codes_, strip_aux_tags_);
+    scorer_ = Scorer(max_freq);
 }
 
 void strip_aux_tags(vector<string>& subwords){
@@ -232,7 +229,7 @@ std::vector<Encoder::variant_t>
 Encoder::apply(const std::string& word, int k)const{
     vector<string> word_bpes;
     split_word_to_chars(word, word_bpes, !strip_aux_tags_);
-    auto best_states = process_bpe_full(word_bpes, codes_, k);
+    auto best_states = process_bpe_full(word_bpes, codes_, scorer_, k);
 
     std::vector<Encoder::variant_t> results(best_states.size());
     auto rit = results.begin();
@@ -269,6 +266,7 @@ void Encoder::load(std::istream &in){
     size_t sz;
     in.read((char*)&sz, sizeof(size_t));
     in.read((char*)&strip_aux_tags_, sizeof(bool));
+    double max_freq = 0.;
     for (int32_t i = 0; i < sz; i++) {
         char c;
         pair_t p;
@@ -279,7 +277,9 @@ void Encoder::load(std::istream &in){
             p.second.push_back(c);
         in.read((char*)&count, sizeof(double));
         codes_[p] = count;
+        max_freq = std::max(max_freq, count);
     }
+    scorer_ = Scorer(max_freq);
 }
 
 std::vector<std::string> uniq_subwords(const std::vector<Encoder::variant_t>& variants,
